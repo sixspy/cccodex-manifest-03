@@ -89,5 +89,8 @@ th { color: var(--muted); font-weight: 500; }
   color: var(--accent);
   font-size: 0.75rem;
 }
+.pill.ok { border-color: var(--accent); color: var(--accent); }
+.pill.bad { border-color: var(--danger); color: var(--danger); }
+h4 { margin: 0.9rem 0 0.5rem; font-weight: 600; }
 .muted { color: var(--muted); }
 .panel { margin-top: 1rem; padding-top: 0.5rem; border-top: 1px dashed var(--line); }

@@ -12,7 +12,10 @@ from app.db import init_db
 from app.services import (
     close_batch,
     get_batch,
+    get_close_run,
+    get_dependencies,
     list_batches,
+    list_checks,
     list_objects,
     list_reports,
     register_object,
@@ -126,7 +129,22 @@ async def api_batch_detail(request: Request, batch_id: int) -> dict:
     batch = get_batch(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
-    return {"batch": batch, "objects": list_objects(batch_id)}
+    # 一次返回：批次详情 + 依赖面板 + 闭合详情 + 判定回放，前端三块同动
+    return {
+        "batch": batch,
+        "objects": list_objects(batch_id),
+        "dependencies": get_dependencies(batch_id),
+        "close_run": get_close_run(batch_id),
+        "checks": list_checks(batch_id),
+    }
+
+
+@get("/api/batches/{batch_id:int}/dependency-checks")
+async def api_dep_checks(request: Request, batch_id: int) -> dict:
+    require_user(request)
+    if not get_batch(batch_id):
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return {"items": list_checks(batch_id)}
 
 
 @post("/api/batches/{batch_id:int}/objects")
@@ -199,6 +217,7 @@ app = Litestar(
         api_meta,
         api_batches,
         api_batch_detail,
+        api_dep_checks,
         api_register,
         api_close,
         api_reports,

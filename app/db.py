@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS close_runs (
   FOREIGN KEY(batch_id) REFERENCES landing_batches(id)
 );
 
+CREATE TABLE IF NOT EXISTS dependency_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  ready INTEGER NOT NULL,
+  pending_count INTEGER NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  run_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(batch_id) REFERENCES landing_batches(id)
+);
+
 CREATE TABLE IF NOT EXISTS visibility_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   as_of_date TEXT NOT NULL,
@@ -91,33 +103,37 @@ def init_db(db_path: str | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript(SCHEMA)
         row = conn.execute("SELECT value FROM meta WHERE key='seeded'").fetchone()
-        if row:
-            return
-        for zone, name, biz, status in SEED_BATCHES:
+        if not row:
+            for zone, name, biz, status in SEED_BATCHES:
+                conn.execute(
+                    "INSERT INTO landing_batches(zone_code, zone_name, biz_date, status, closed_object_count) "
+                    "VALUES (?,?,?,?,?)",
+                    (zone, name, biz, status, 2 if status == "已闭合" else None),
+                )
+            closed = conn.execute(
+                "SELECT id FROM landing_batches WHERE status='已闭合'"
+            ).fetchone()
+            if closed:
+                bid = closed["id"]
+                conn.execute(
+                    "INSERT INTO landing_objects(batch_id, object_key, content_hash, byte_size, status) "
+                    "VALUES (?,?,?,?,?)",
+                    (bid, "part-000.parquet", "hash-silver-a", 1024, "已闭合"),
+                )
+                conn.execute(
+                    "INSERT INTO landing_objects(batch_id, object_key, content_hash, byte_size, status) "
+                    "VALUES (?,?,?,?,?)",
+                    (bid, "part-001.parquet", "hash-silver-b", 2048, "已闭合"),
+                )
+                conn.execute(
+                    "INSERT INTO close_runs(batch_id, object_count, ok, detail) VALUES (?,?,1,?)",
+                    (bid, 2, "种子闭合"),
+                )
             conn.execute(
-                "INSERT INTO landing_batches(zone_code, zone_name, biz_date, status, closed_object_count) "
-                "VALUES (?,?,?,?,?)",
-                (zone, name, biz, status, 2 if status == "已闭合" else None),
+                "INSERT INTO meta(key, value) VALUES ('seeded','1')"
             )
-        closed = conn.execute(
-            "SELECT id FROM landing_batches WHERE status='已闭合'"
-        ).fetchone()
-        if closed:
-            bid = closed["id"]
-            conn.execute(
-                "INSERT INTO landing_objects(batch_id, object_key, content_hash, byte_size, status) "
-                "VALUES (?,?,?,?,?)",
-                (bid, "part-000.parquet", "hash-silver-a", 1024, "已闭合"),
-            )
-            conn.execute(
-                "INSERT INTO landing_objects(batch_id, object_key, content_hash, byte_size, status) "
-                "VALUES (?,?,?,?,?)",
-                (bid, "part-001.parquet", "hash-silver-b", 2048, "已闭合"),
-            )
-            conn.execute(
-                "INSERT INTO close_runs(batch_id, object_count, ok, detail) VALUES (?,?,1,?)",
-                (bid, 2, "种子闭合"),
-            )
+        # 跨区依赖演示补种（幂等）：一个仍在收集中的银区批，依赖铜区齐套才可闭合
         conn.execute(
-            "INSERT INTO meta(key, value) VALUES ('seeded','1')"
+            "INSERT OR IGNORE INTO landing_batches(zone_code, zone_name, biz_date, status) "
+            "VALUES ('silver_events','事件银区','2026-11-14','收集中')"
         )

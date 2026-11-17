@@ -69,12 +69,14 @@
     setMsg("");
     try {
       await api("/api/batches/" + selected + "/close", { method: "POST", body: "{}" });
-      await openBatch(selected);
-      await refresh();
       setMsg("清单已闭合");
-      render();
     } catch (e) {
       setMsg(e.message);
+    } finally {
+      // 成败都整体刷新：依赖面板 + 批次列表 + 闭合详情三块同动
+      await openBatch(selected);
+      await refresh();
+      render();
     }
   }
 
@@ -101,12 +103,19 @@
     });
   }
 
+  function depBadge(b) {
+    if (!b.dep_label || b.dep_label === "无依赖") return `<span class="muted">无依赖</span>`;
+    return b.dep_ready
+      ? `<span class="pill ok">齐套</span>`
+      : `<span class="pill bad">未齐套·缺${b.dep_pending}</span>`;
+  }
+
   function renderBatches() {
     return `
       <h2>落地批次</h2>
       <p class="muted">主链：选批 → 登记对象 → 闭合清单 → 可见性对账</p>
       <table>
-        <thead><tr><th>编号</th><th>湖区</th><th>业务日</th><th>状态</th><th></th></tr></thead>
+        <thead><tr><th>编号</th><th>湖区</th><th>业务日</th><th>状态</th><th>依赖</th><th></th></tr></thead>
         <tbody>
           ${batches
             .map(
@@ -115,12 +124,80 @@
             <td>${b.zone_name}<div class="muted">${b.zone_code}</div></td>
             <td>${b.biz_date}</td>
             <td><span class="pill">${b.status}</span></td>
+            <td>${depBadge(b)}</td>
             <td><button type="button" class="secondary" data-open="${b.id}">打开</button></td>
           </tr>`
             )
             .join("")}
         </tbody>
       </table>`;
+  }
+
+  function renderDepPanel() {
+    const dep = (detail && detail.dependencies) || {};
+    const checks = (detail && detail.checks) || [];
+    const pendingRows = (dep.pending || [])
+      .map(
+        (p) => `<tr>
+        <td>${p.zone_name}<div class="muted">${p.zone_code}</div></td>
+        <td>${p.biz_date}</td><td>${p.status}</td><td>${p.registered_objects}</td>
+      </tr>`
+      )
+      .join("");
+    return `
+      <div class="panel">
+        <h3>跨区依赖 ${
+          dep.label
+            ? `<span class="pill ${dep.ready ? "ok" : "bad"}">${dep.label}</span>`
+            : ""
+        }</h3>
+        <p>${dep.message || ""}</p>
+        <p class="muted">面板为打开瞬间快照（${dep.evaluated_at || "-"}）；能否放行以提交瞬间重取为准。</p>
+        ${
+          pendingRows
+            ? `<table>
+          <thead><tr><th>待闭合湖区</th><th>业务日</th><th>状态</th><th>已登记对象</th></tr></thead>
+          <tbody>${pendingRows}</tbody>
+        </table>`
+            : ""
+        }
+        ${
+          checks.length
+            ? `<h4>判定回放</h4>
+        <table>
+          <thead><tr><th>时间</th><th>来源</th><th>结果</th><th>欠账批数</th></tr></thead>
+          <tbody>
+            ${checks
+              .map(
+                (c) => `<tr>
+              <td>${c.created_at}</td><td>${c.source}</td>
+              <td>${c.ready ? "齐套" : "未齐套"}</td><td>${c.pending_count}</td>
+            </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>`
+            : ""
+        }
+      </div>`;
+  }
+
+  function renderCloseRun() {
+    const run = detail && detail.close_run;
+    if (!run) return "";
+    let memo = run.detail || "";
+    try {
+      const d = JSON.parse(run.detail);
+      memo = d.message || memo;
+    } catch (e) {
+      /* 种子数据是纯文本，直接展示 */
+    }
+    return `
+      <div class="panel">
+        <h3>闭合详情</h3>
+        <p>闭合对象 ${run.object_count} 个 · ${run.created_at}</p>
+        <p class="muted">${memo}</p>
+      </div>`;
   }
 
   function renderDetail() {
@@ -136,6 +213,8 @@
         <button type="button" id="btn-close">闭合清单</button>
         <button type="button" class="secondary" id="btn-report-from-detail">跑可见性对账</button>
       </div>
+      ${renderDepPanel()}
+      ${renderCloseRun()}
       <div class="panel">
         <h3>登记对象</h3>
         <label>对象键<input id="f-key" value="${form.object_key}" /></label>
